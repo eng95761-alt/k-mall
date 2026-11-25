@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: k-mall
+    runtime: docker
+    plan: starter            # always on (free plan sleeps and would stop collection)
+    region: frankfurt
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: k-mall-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: HTTPS_ONLY
+        value: "true"
+      - key: COLLECT_INTERVAL
+        value: "60"
+      # secrets — entered by the owner in the Render dashboard, never in git
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ROUTER_API_USER
+        sync: false
+      - key: ROUTER_API_PASSWORD
+        sync: false
+      - key: ROUTERS_JSON
+        sync: false
+      - key: BTH_WG_CONFIG_B64
+        sync: false
+
+databases:
+  - name: k-mall-db
+    plan: basic-256mb
+    region: frankfurt

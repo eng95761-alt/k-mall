@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>شبكة المجمع — لوحة المراقبة</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <section id="login-view" class="login" hidden>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <h1>شبكة المجمع</h1>
+      <p class="muted">لوحة مراقبة الراوترات</p>
+      <label>اسم المستخدم<input name="username" autocomplete="username" required></label>
+      <label>كلمة المرور<input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">دخول</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </section>
+
+  <section id="app-view" hidden>
+    <header class="topbar">
+      <div>
+        <h1>شبكة المجمع</h1>
+        <p class="muted" id="updated">—</p>
+      </div>
+      <div class="topbar-actions">
+        <span id="whoami" class="muted"></span>
+        <button id="logout" class="ghost" type="button">خروج</button>
+      </div>
+    </header>
+
+    <section class="totals" aria-label="ملخص">
+      <div class="tile"><span class="tile-label">الراوترات المتصلة</span><span class="tile-value" id="t-online">—</span></div>
+      <div class="tile"><span class="tile-label">الزبائن المتصلون الآن</span><span class="tile-value" id="t-clients">—</span></div>
+      <div class="tile"><span class="tile-label">تنبيهات مفتوحة</span><span class="tile-value" id="t-alerts">—</span></div>
+    </section>
+
+    <section id="alerts" class="alerts" aria-live="polite"></section>
+
+    <section id="routers" class="grid" aria-label="الراوترات"></section>
+
+    <footer class="muted foot">تُحدَّث البيانات كل دقيقة تقريباً. هذه اللوحة للقراءة فقط ولا تغيّر أي إعداد في الراوترات.</footer>
+  </section>
+
+  <template id="router-tpl">
+    <article class="card">
+      <header class="card-head">
+        <h2 class="r-name"></h2>
+        <span class="badge"></span>
+      </header>
+      <p class="muted r-sub"></p>
+      <dl class="stats">
+        <div><dt>الزبائن الآن</dt><dd class="r-clients">—</dd></div>
+        <div><dt>الكروت</dt><dd class="r-cards">—</dd></div>
+        <div><dt>المعالج</dt><dd class="r-cpu">—</dd></div>
+        <div><dt>الذاكرة المستخدمة</dt><dd class="r-mem">—</dd></div>
+        <div><dt>التخزين المستخدم</dt><dd class="r-hdd">—</dd></div>
+        <div><dt>زمن الاستجابة</dt><dd class="r-lat">—</dd></div>
+      </dl>
+      <p class="muted r-foot"></p>
+      <p class="error r-err"></p>
+    </article>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
