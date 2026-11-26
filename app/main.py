@@ -65,15 +65,21 @@ def bootstrap_defaults() -> None:
                     row.subnet = r.subnet
                 if r.note:
                     row.note = r.note
-        if not db.scalar(select(func.count()).select_from(User)):
-            if settings.admin_username and settings.admin_password:
-                if len(settings.admin_password) < 10:
-                    raise RuntimeError("ADMIN_PASSWORD must be at least 10 characters")
-                db.add(User(username=settings.admin_username,
-                            pw_hash=hash_password(settings.admin_password), role="owner"))
-                log.info("Created owner account %s", settings.admin_username)
+        if settings.admin_username and settings.admin_password:
+            if len(settings.admin_password) < 10:
+                raise RuntimeError("ADMIN_PASSWORD must be at least 10 characters")
+            owner_user = db.scalar(select(User).where(User.username == settings.admin_username))
+            if owner_user:
+                if not verify_password(settings.admin_password, owner_user.pw_hash):
+                    owner_user.pw_hash = hash_password(settings.admin_password)
+                    owner_user.active = True
+                    log.info("Synchronized owner password from ADMIN_PASSWORD env var")
             else:
-                log.warning("No users yet and ADMIN_USERNAME/ADMIN_PASSWORD not set — nobody can log in.")
+                db.add(User(username=settings.admin_username,
+                            pw_hash=hash_password(settings.admin_password), role="owner", active=True))
+                log.info("Created owner account %s", settings.admin_username)
+        elif not db.scalar(select(func.count()).select_from(User)):
+            log.warning("No users yet and ADMIN_USERNAME/ADMIN_PASSWORD not set — nobody can log in.")
         db.commit()
 
 
