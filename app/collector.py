@@ -33,9 +33,9 @@ SNAPSHOT_EVERY_CYCLES = 5
 
 _UMWEB_CACHE: dict[str, tuple[float, dict]] = {}
 _DYNAMIC_ROUTER_IPS: dict[str, str] = {}
-_SUBNET_POOLS: dict[str, str] = {
-    "km222-rb3011": "172.17.15.",
-    "km222-l009": "172.17.25.",
+_SUBNET_POOLS: dict[str, list[str]] = {
+    "km222-rb3011": ["172.17.15.", "172.16.15."],
+    "km222-l009": ["172.17.25.", "172.16.25."],
 }
 
 
@@ -96,31 +96,39 @@ def _connect_api_with_fallback(r: RouterDef, s: Settings) -> tuple[RouterOSApi, 
     for h in ordered_hosts:
         t0 = time.monotonic()
         try:
-            api = RouterOSApi(h, r.port, s.router_user, s.router_password, s.socks, timeout=3.0)
+            api = RouterOSApi(h, r.port, s.router_user, s.router_password, s.socks, timeout=5.5)
             _DYNAMIC_ROUTER_IPS[r.id] = h
             return api, round((time.monotonic() - t0) * 1000, 1), h
         except Exception as e:
             last_err = e
 
-    # If all configured/cached hosts failed, try fast parallel discovery in known dynamic subnet pool
-    pool_prefix = _SUBNET_POOLS.get(r.id)
-    if pool_prefix:
-        candidate_ips = [f"{pool_prefix}{i}" for i in range(1, 15) if f"{pool_prefix}{i}" not in ordered_hosts]
+    # If all configured/cached hosts failed, try fast parallel discovery in known dynamic subnet pools
+    pools = _SUBNET_POOLS.get(r.id, [])
+    if isinstance(pools, str):
+        pools = [pools]
+    candidate_ips = []
+    for prefix in pools:
+        for i in range(1, 15):
+            cand = f"{prefix}{i}"
+            if cand not in ordered_hosts and cand not in candidate_ips:
+                candidate_ips.append(cand)
+
+    if candidate_ips:
         def _quick_probe(ip: str) -> str | None:
             try:
-                sock = open_tcp(ip, r.port, s.socks, timeout=1.5)
+                sock = open_tcp(ip, r.port, s.socks, timeout=2.5)
                 sock.close()
                 return ip
             except Exception:
                 return None
 
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        with ThreadPoolExecutor(max_workers=10) as ex:
             responsive = [ip for ip in ex.map(_quick_probe, candidate_ips) if ip]
 
         for ip in responsive:
             t0 = time.monotonic()
             try:
-                api = RouterOSApi(ip, r.port, s.router_user, s.router_password, s.socks, timeout=3.0)
+                api = RouterOSApi(ip, r.port, s.router_user, s.router_password, s.socks, timeout=5.5)
                 _DYNAMIC_ROUTER_IPS[r.id] = ip
                 log.info(f"Auto-discovered dynamic PPPoE IP for {r.id}: {ip}")
                 return api, round((time.monotonic() - t0) * 1000, 1), ip

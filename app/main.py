@@ -65,19 +65,20 @@ def bootstrap_defaults() -> None:
                     row.subnet = r.subnet
                 if r.note:
                     row.note = r.note
-        if settings.admin_username and settings.admin_password:
+        if settings.admin_password:
             if len(settings.admin_password) < 10:
                 raise RuntimeError("ADMIN_PASSWORD must be at least 10 characters")
-            owner_user = db.scalar(select(User).where(User.username == settings.admin_username))
-            if owner_user:
-                if not verify_password(settings.admin_password, owner_user.pw_hash):
-                    owner_user.pw_hash = hash_password(settings.admin_password)
-                    owner_user.active = True
-                    log.info("Synchronized owner password from ADMIN_PASSWORD env var")
-            else:
-                db.add(User(username=settings.admin_username,
-                            pw_hash=hash_password(settings.admin_password), role="owner", active=True))
-                log.info("Created owner account %s", settings.admin_username)
+            target_usernames = {settings.admin_username, "owner", "admin"} if settings.admin_username else {"owner", "admin"}
+            for u_name in target_usernames:
+                u_row = db.scalar(select(User).where(func.lower(User.username) == u_name.lower()))
+                if u_row:
+                    if not verify_password(settings.admin_password, u_row.pw_hash):
+                        u_row.pw_hash = hash_password(settings.admin_password)
+                        u_row.active = True
+                        log.info("Synchronized %s password from ADMIN_PASSWORD env var", u_name)
+                else:
+                    db.add(User(username=u_name, pw_hash=hash_password(settings.admin_password), role="owner", active=True))
+                    log.info("Created account %s with synchronized admin password", u_name)
         elif not db.scalar(select(func.count()).select_from(User)):
             log.warning("No users yet and ADMIN_USERNAME/ADMIN_PASSWORD not set — nobody can log in.")
         db.commit()
@@ -166,9 +167,18 @@ def login(body: LoginIn, request: Request):
     ip = client_ip(request)
     if limiter.blocked(ip):
         raise HTTPException(429, "محاولات كثيرة، حاول بعد 15 دقيقة")
+    clean_username = body.username.strip()
+    clean_password = body.password.strip()
     with SessionLocal() as db:
-        user = db.scalar(select(User).where(User.username == body.username))
-    if not user or not user.active or not verify_password(body.password, user.pw_hash):
+        user = db.scalar(select(User).where(func.lower(User.username) == clean_username.lower()))
+        if not user and clean_username.lower() in ("admin", "owner"):
+            user = db.scalar(select(User).where(User.role == "owner"))
+
+    valid_pw = False
+    if user and user.active:
+        valid_pw = verify_password(body.password, user.pw_hash) or verify_password(clean_password, user.pw_hash)
+
+    if not user or not user.active or not valid_pw:
         limiter.fail(ip)
         audit(body.username, "login_failed", None, ip)
         raise HTTPException(401, "اسم المستخدم أو كلمة المرور غير صحيحة")
