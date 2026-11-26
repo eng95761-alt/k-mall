@@ -36,6 +36,17 @@ def start_tunnel() -> None:
     proc = subprocess.Popen([exe, "-s", "-c", str(cfg)])
     atexit.register(proc.terminate)
     print(f"tunnel: wireproxy started (pid {proc.pid}) on {socks}")
+    import socket, time
+    host, _, port_s = socks.rpartition(":")
+    for _ in range(20):
+        s = socket.socket()
+        s.settimeout(0.2)
+        if s.connect_ex((host, int(port_s))) == 0:
+            s.close()
+            break
+        s.close()
+        time.sleep(0.2)
+    time.sleep(2.0)
 
 
 if __name__ == "__main__":

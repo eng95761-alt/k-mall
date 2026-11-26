@@ -1,3 +1,12 @@
+# Stage 1: Build React/Tailwind frontend at Docker build time
+FROM node:22-alpine AS frontend-builder
+WORKDIR /build/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Production Python runtime (zero Node.js overhead)
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
@@ -24,6 +33,9 @@ WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini .
+COPY --from=frontend-builder /build/app/static ./app/static
 COPY start.sh .
 RUN chmod +x start.sh && useradd --create-home --uid 10001 kmall
 USER kmall

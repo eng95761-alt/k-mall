@@ -19,3 +19,10 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+
+# node / frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/

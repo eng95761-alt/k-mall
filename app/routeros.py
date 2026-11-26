@@ -1,7 +1,9 @@
-"""Minimal, READ-ONLY RouterOS API client (RouterOS v6.43+ and v7).
+"""RouterOS API client (RouterOS v6.43+ and v7) with strict read/write separation.
 
-Safety: only commands listed in READ_ONLY_COMMANDS can be sent. Every other
-command (add/set/remove/reboot/...) raises before anything reaches the router.
+Safety:
+- `RouterOSApi.print()` ONLY permits commands in READ_ONLY_COMMANDS.
+- `RouterOSApi.write_typed()` is blocked unless `allow_writes=True` AND the command
+  is explicitly listed in TYPED_WRITE_ALLOWLIST with allowed parameter keys only.
 """
 from __future__ import annotations
 
@@ -14,14 +16,39 @@ READ_ONLY_COMMANDS = frozenset({
     "/system/identity/print",
     "/system/resource/print",
     "/system/routerboard/print",
+    "/system/health/print",
     "/interface/print",
+    "/interface/vlan/print",
+    "/interface/bridge/print",
+    "/ip/address/print",
+    "/ip/pool/print",
+    "/ip/dhcp-server/print",
+    "/ip/hotspot/print",
     "/ip/hotspot/active/print",
     "/ip/hotspot/host/print",
-    "/tool/user-manager/user/print",      # User Manager v6 (legacy package)
+    "/ip/hotspot/user/profile/print",
+    "/tool/user-manager/user/print",
     "/tool/user-manager/session/print",
-    "/user-manager/user/print",           # User Manager v7 (integrated)
+    "/tool/user-manager/profile/print",
+    "/tool/user-manager/customer/print",
+    "/user-manager/user/print",
+    "/user-manager/user-profile/print",
     "/user-manager/session/print",
+    "/user-manager/profile/print",
+    "/user-manager/user/group/print",
+    "/user-manager/limitation/print",
 })
+
+TYPED_WRITE_ALLOWLIST: dict[str, frozenset[str]] = {
+    "/tool/user-manager/user/add": frozenset({"customer", "username", "password", "comment", "disabled"}),
+    "/tool/user-manager/user/create-and-activate-profile": frozenset({"numbers", "profile", "customer"}),
+    "/tool/user-manager/user/remove": frozenset({"numbers"}),
+    "/tool/user-manager/session/remove": frozenset({"numbers"}),
+    "/user-manager/user/add": frozenset({"name", "password", "group", "comment", "disabled"}),
+    "/user-manager/user-profile/add": frozenset({"user", "profile"}),
+    "/user-manager/user/remove": frozenset({"numbers"}),
+    "/user-manager/session/remove": frozenset({"numbers"}),
+}
 
 
 class RouterOSError(Exception):
@@ -29,6 +56,10 @@ class RouterOSError(Exception):
 
 
 class NotAllowed(RouterOSError):
+    pass
+
+
+class WritesDisabled(RouterOSError):
     pass
 
 
@@ -59,7 +90,9 @@ def decode_length(read) -> int:
 
 class RouterOSApi:
     def __init__(self, host: str, port: int, username: str, password: str,
-                 socks: tuple[str, int] | None = None, timeout: float = 15.0):
+                 socks: tuple[str, int] | None = None, timeout: float = 15.0,
+                 allow_writes: bool = False):
+        self.allow_writes = allow_writes
         self.sock: socket.socket = open_tcp(host, port, socks, timeout)
         self.sock.settimeout(timeout)
         try:
@@ -68,7 +101,6 @@ class RouterOSApi:
             self.close()
             raise
 
-    # ---- wire protocol ----
     def _read(self, n: int) -> bytes:
         return _recv_exact(self.sock, n)
 
@@ -84,7 +116,7 @@ class RouterOSApi:
                 return words
             words.append(self._read(n).decode("utf-8", "replace"))
 
-    def _talk(self, words: list[str]) -> tuple[list[dict], dict]:
+    def _talk(self, words: list[str], max_rows: int | None = None) -> tuple[list[dict], dict]:
         self._send_sentence(words)
         rows, done = [], {}
         while True:
@@ -93,28 +125,32 @@ class RouterOSApi:
                 continue
             kind, attrs = sentence[0], _attrs(sentence[1:])
             if kind == "!re":
+                if max_rows is not None and len(rows) >= max_rows:
+                    raise RouterOSError(f"row limit exceeded ({max_rows})")
                 rows.append(attrs)
             elif kind == "!done":
                 done = attrs
                 return rows, done
             elif kind == "!trap":
-                # drain until !done, then raise
                 msg = attrs.get("message", "error")
-                while (s := self._read_sentence()) and s[0] != "!done":
-                    pass
+                while True:
+                    s = self._read_sentence()
+                    if s and s[0] == "!done":
+                        break
                 raise RouterOSError(msg)
             elif kind == "!fatal":
                 raise RouterOSError(" ".join(sentence[1:]) or "fatal")
 
     def _login(self, username: str, password: str) -> None:
         _, done = self._talk(["/login", f"=name={username}", f"=password={password}"])
-        if "ret" in done:  # pre-6.43 challenge/response
+        if "ret" in done:
             challenge = bytes.fromhex(done["ret"])
             digest = hashlib.md5(b"\x00" + password.encode() + challenge).hexdigest()
             self._talk(["/login", f"=name={username}", f"=response=00{digest}"])
 
-    # ---- public, read-only ----
-    def print(self, command: str, count_only: bool = False, proplist: list[str] | None = None) -> list[dict] | int:
+    def print(self, command: str, count_only: bool = False,
+              proplist: list[str] | None = None, max_rows: int | None = None,
+              queries: list[str] | None = None) -> list[dict] | int:
         if command not in READ_ONLY_COMMANDS:
             raise NotAllowed(f"command not allowed: {command}")
         words = [command]
@@ -122,10 +158,29 @@ class RouterOSApi:
             words.append("=count-only=")
         if proplist:
             words.append("=.proplist=" + ",".join(proplist))
-        rows, done = self._talk(words)
+        if queries:
+            for q in queries:
+                if not q.startswith("?"):
+                    raise NotAllowed(f"invalid query word: {q}")
+                words.append(q)
+        rows, done = self._talk(words, max_rows=max_rows)
         if count_only:
             return int(done.get("ret", "0"))
         return rows
+
+    def write_typed(self, command: str, params: dict[str, str]) -> str | None:
+        """Execute a strictly allowlisted, typed write command when writes are explicitly enabled."""
+        if command not in TYPED_WRITE_ALLOWLIST:
+            raise NotAllowed(f"write command not allowed: {command}")
+        if not self.allow_writes:
+            raise WritesDisabled("router write operations are disabled (ALLOW_ROUTER_WRITES=false)")
+        allowed_keys = TYPED_WRITE_ALLOWLIST[command]
+        bad_keys = set(params.keys()) - allowed_keys
+        if bad_keys:
+            raise NotAllowed(f"disallowed parameter keys: {sorted(bad_keys)}")
+        words = [command] + [f"={k}={v}" for k, v in params.items()]
+        _, done = self._talk(words)
+        return done.get("ret")
 
     def close(self) -> None:
         try:

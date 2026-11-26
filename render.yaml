@@ -2,7 +2,7 @@ services:
   - type: web
     name: k-mall
     runtime: docker
-    plan: starter            # always on (free plan sleeps and would stop collection)
+    plan: free
     region: frankfurt
     healthCheckPath: /healthz
     autoDeploy: true
@@ -17,6 +17,10 @@ services:
         value: "true"
       - key: COLLECT_INTERVAL
         value: "60"
+      - key: HISTORY_DAYS
+        value: "14"
+      - key: ALLOW_ROUTER_WRITES
+        value: "false"
       # secrets — entered by the owner in the Render dashboard, never in git
       - key: ADMIN_USERNAME
         sync: false
@@ -33,5 +37,5 @@ services:
 
 databases:
   - name: k-mall-db
-    plan: basic-256mb
+    plan: free
     region: frankfurt
